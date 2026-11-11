@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - `install.sh`: one-command Linux installer with a systemd service
 - `shipit hook <app> --url ...`: register the GitHub webhook through `gh`
