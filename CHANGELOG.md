@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- README: "Buy me a coffee" section (USDT TRC20) and a Sponsor button via `.github/FUNDING.yml`
+
 ## 0.2.1
 
 - `shipit doctor` works before the first app exists (and without a config file)
