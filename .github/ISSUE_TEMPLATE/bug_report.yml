@@ -1,0 +1,31 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / logs
+      description: Output of the failing command. Remove secrets and tokens first.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: shipit version
+      description: Output of `shipit --version`
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, Docker version
+  - type: input
+    id: lang
+    attributes:
+      label: App language / framework

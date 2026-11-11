@@ -1,5 +1,9 @@
 # 🚢 shipit
 
+[![CI](https://github.com/desnarong/shipit/actions/workflows/ci.yml/badge.svg)](https://github.com/desnarong/shipit/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/shipit-deploy)](https://pypi.org/project/shipit-deploy/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Self-hosted, open-source auto deploy that works with **any language**.
 `git push` → webhook → clone → build (Docker) → run → health check → **auto rollback** on failure.
 
@@ -17,7 +21,8 @@ Self-hosted, open-source auto deploy that works with **any language**.
 ## Quick start (2 commands)
 
 ```bash
-pip install git+https://github.com/desnarong/shipit.git
+pip install shipit-deploy          # the command is `shipit`
+# or the latest from GitHub: pip install git+https://github.com/desnarong/shipit.git
 shipit up https://github.com/you/your-app.git
 ```
 
@@ -122,4 +127,4 @@ End-to-end tests deploy real sample apps with Docker (needs Docker + git, takes 
 SHIPIT_E2E=1 python -m unittest tests.test_e2e -v
 ```
 
-MIT licensed.
+Contributions welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md). MIT licensed.
