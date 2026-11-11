@@ -389,5 +389,32 @@ class LiveConfigTests(unittest.TestCase):
             self.assertEqual(load(f).state_dir, (Path(t) / "data").resolve())
 
 
+class DoctorWithoutAppsTests(unittest.TestCase):
+    def test_doctor_works_without_config_file_or_apps(self):
+        import contextlib
+        import io
+        from unittest import mock
+        from shipit.cli import main
+        with tempfile.TemporaryDirectory() as t, mock.patch("shipit.doctor._docker_ok", return_value=(True, "ok")):
+            missing = str(Path(t) / "nope.toml")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main(["-c", missing, "doctor"])
+            self.assertIn("no apps configured yet", buf.getvalue())
+            self.assertIn("docker", buf.getvalue())
+            self.assertIn(rc, (0, 1))          # 1 only if git/python are missing on this machine, never a crash
+            empty_cfg = Path(t) / "empty.toml"
+            empty_cfg.write_text("[server]\nport = 9000\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertIn(main(["-c", str(empty_cfg), "doctor"]), (0, 1))
+
+    def test_other_commands_still_require_an_app(self):
+        from shipit.cli import main
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "empty.toml"
+            f.write_text("[server]\nport = 9000\n")
+            self.assertEqual(main(["-c", str(f), "list"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,8 @@ def checks(cfg) -> list[tuple[str, bool, str]]:
 
 def run(cfg) -> int:
     bad = 0
+    if not cfg.apps:
+        print("  (no apps configured yet - checking the machine only; add one with: shipit up <git-url>)")
     for name, ok, detail in checks(cfg):
         print(f"  [{'ok' if ok else 'FAIL'}] {name}: {detail}")
         bad += not ok

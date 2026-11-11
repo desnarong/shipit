@@ -7,7 +7,7 @@ import tomllib
 from pathlib import Path
 
 from . import __version__
-from .config import LiveConfig, load
+from .config import LiveConfig, empty, load
 from .deploy import Deployer
 from .detect import detect
 from .easy import app_name_from_repo, append_app, default_branch, free_port, get_secret, webhook_secret
@@ -147,6 +147,9 @@ def main(argv: list[str] | None = None) -> int:
             r = detect(a.path, a.port)
             print(f"# language: {r.lang}\n{r.dockerfile}")
             return 0
+        if a.cmd == "doctor":
+            from . import doctor
+            return doctor.run(load(a.config, allow_empty=True) if Path(a.config).exists() else empty(a.config))
         cfg = load(a.config)
         if a.cmd == "hook":
             if a.app not in cfg.apps:
@@ -155,9 +158,6 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_hook(a, cfg)
         if a.cmd == "list":
             return cmd_list(cfg)
-        if a.cmd == "doctor":
-            from . import doctor
-            return doctor.run(cfg)
         if a.cmd == "serve":
             from .webhook import make_server
             resync_proxy(cfg)

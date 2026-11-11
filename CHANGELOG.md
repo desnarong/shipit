@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `shipit doctor` works before the first app exists (and without a config file)
+
 ## 0.2.0
 
 - `install.sh`: one-command Linux installer with a systemd service

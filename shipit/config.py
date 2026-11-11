@@ -42,7 +42,12 @@ class Config:
     apps: dict[str, App]
 
 
-def load(path: str | Path) -> Config:
+def empty(path: str | Path) -> Config:
+    """A config with no apps (used by `shipit doctor` before the first `shipit up`)."""
+    return Config((Path(path).resolve().parent / ".shipit").resolve(), "0.0.0.0", 9000, "http://127.0.0.1:2019", {})
+
+
+def load(path: str | Path, allow_empty: bool = False) -> Config:
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     server = data.get("server", {})
     apps: dict[str, App] = {}
@@ -55,7 +60,7 @@ def load(path: str | Path) -> Config:
         if app.name in apps:
             raise ValueError(f"duplicate app {app.name!r}")
         apps[app.name] = app
-    if not apps:
+    if not apps and not allow_empty:
         raise ValueError("no [[app]] entries in config")
     return Config(
         # relative state_dir is relative to the config file, not the current directory
