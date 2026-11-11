@@ -147,4 +147,18 @@ End-to-end tests deploy real sample apps with Docker (needs Docker + git, takes 
 SHIPIT_E2E=1 python -m unittest tests.test_e2e -v
 ```
 
+## ☕ Buy me a coffee
+
+shipit is free and open source. If it saves you time, you can support it with a coffee - thank you!
+
+<img src="docs/donate-usdt-trc20.png" alt="Deposit USDT (TRC20) QR code" width="260">
+
+| | |
+|---|---|
+| **Coin** | USDT |
+| **Network** | TRX - Tron (TRC20) |
+| **Address** | `TPqzFLc4VhmbSh52G68JVL6rNLWUNMc8Nx` |
+
+Send USDT on the **Tron (TRC20)** network only. Double-check the address before sending - crypto transfers can't be reversed.
+
 Contributions welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md). MIT licensed.
