@@ -85,7 +85,8 @@ class Deployer:
         image = f"shipit/{a.name}:{sha}"
         dockerfile = self.src / (a.dockerfile or "Dockerfile")
         self._port = a.port  # a repo-provided Dockerfile listens where the config says
-        if not dockerfile.exists():
+        generated = not dockerfile.exists()
+        if generated:
             d = detect(self.src, a.port, a.start)
             self._port = d.port
             log(f"detected {d.lang}; generating Dockerfile")
@@ -95,7 +96,19 @@ class Deployer:
         for k, v in a.build_args.items():
             cmd += ["--build-arg", f"{k}={v}"]
         run(cmd + [str(self.src)])
+        if not generated:
+            exposed = self._exposed_ports(image)
+            if len(exposed) == 1:   # zero-config: follow the Dockerfile's EXPOSE
+                self._port = exposed[0]
         return image
+
+    @staticmethod
+    def _exposed_ports(image: str) -> list[int]:
+        try:
+            data = json.loads(_out(["docker", "image", "inspect", "-f", "{{json .Config.ExposedPorts}}", image]))
+        except (subprocess.CalledProcessError, ValueError):
+            return []
+        return sorted(int(k.split("/")[0]) for k in (data or {}))
 
     def _run_container(self, name: str, image: str, publish: str, restart: str = "unless-stopped") -> None:
         a = self.app

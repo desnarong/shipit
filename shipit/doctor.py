@@ -39,7 +39,7 @@ def checks(cfg) -> list[tuple[str, bool, str]]:
                 out.append((f"{a.name}: port {p}", False, f"also used by {ports[p]}"))
             ports[p] = a.name
         env = a.secret_env or "SHIPIT_SECRET"
-        out.append((f"{a.name}: webhook secret ${env}", bool(os.environ.get(env)), "set" if os.environ.get(env) else "not set (webhooks will be rejected)"))
+        out.append((f"{a.name}: webhook secret ${env}", True, "set" if os.environ.get(env) else f"not set; using auto-generated secret in {cfg.state_dir / 'webhook-secret'}"))
         if a.token_env:
             out.append((f"{a.name}: git token ${a.token_env}", bool(os.environ.get(a.token_env)), "set" if os.environ.get(a.token_env) else "not set"))
         if a.env_file:

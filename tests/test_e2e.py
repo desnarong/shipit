@@ -160,5 +160,24 @@ class ReleaseLifecycle(E2EBase):
         self.assertEqual(d.state()["history"][-1]["status"], "pre-deploy-failed")
 
 
+class ZeroConfigUp(E2EBase):
+    def test_up_with_no_config_and_exposed_port(self):
+        from shipit.cli import main
+        # Dockerfile EXPOSEs 3000 and nothing in config says so: shipit must find it.
+        commit_files(self.repo, {
+            "Dockerfile": "FROM busybox\nCOPY www /www\nEXPOSE 3000\nCMD [\"httpd\", \"-f\", \"-p\", \"3000\", \"-h\", \"/www\"]\n",
+            "www/index.html": "up-v1",
+        })
+        cfg = self.tmp / "shipit.toml"
+        rc = main(["-c", str(cfg), "up", self.repo.resolve().as_uri(), "--name", self.name])
+        self.assertEqual(rc, 0)
+        text = cfg.read_text()
+        port = int(text.split("host_port = ")[1].split()[0])
+        self.assertEqual(fetch(port), "up-v1")
+        self.assertIn('branch = "main"', text)           # branch auto-detected
+        self.assertEqual(main(["-c", str(cfg), "up", self.repo.resolve().as_uri(), "--name", self.name]), 2)  # no duplicates
+        self.assertEqual(main(["-c", str(cfg), "list"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

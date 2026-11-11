@@ -14,18 +14,34 @@ Self-hosted, open-source auto deploy that works with **any language**.
 - Slack / Discord / Mattermost notifications, deploy history, automatic pruning of old images
 - `shipit status <app>` and `shipit logs <app> -f`
 
-## Quick start
+## Quick start (2 commands)
 
 ```bash
-pip install .                      # or: python -m shipit ...
-shipit init                    # writes shipit.toml
-# edit shipit.toml, then:
-shipit doctor                     # check docker / git / caddy / secrets
-shipit detect ./my-project     # preview the generated Dockerfile
-shipit deploy myapp            # deploy once, manually
-export SHIPIT_SECRET=change-me
-shipit serve                   # listen for webhooks on :9000
+pip install git+https://github.com/desnarong/shipit.git
+shipit up https://github.com/you/your-app.git
 ```
+
+That's it. `shipit up` picks the default branch, a free port and the right Dockerfile (or writes one),
+builds, starts the app, health-checks it and prints the URL. No config file to write -
+it creates `shipit.toml` for you. Add `--domain app.example.com` for HTTPS + zero-downtime releases (needs Caddy).
+
+**Turn on auto deploy** (every push redeploys): run `shipit serve`, then add the webhook URL and secret
+that `shipit up` printed to your repo (Settings -> Webhooks).
+
+Other commands:
+
+```bash
+shipit list                  # apps, status, URLs
+shipit deploy myapp          # redeploy now
+shipit rollback myapp        # back to the previous release
+shipit logs myapp -f         # follow logs
+shipit status myapp          # current release + history
+shipit doctor                # check docker / git / caddy / secrets
+shipit detect ./my-project   # preview the generated Dockerfile
+```
+
+The webhook secret is generated for you (kept in `.shipit/webhook-secret`); set `SHIPIT_SECRET` to use your own.
+If your Dockerfile has a single `EXPOSE`, shipit uses that port automatically.
 
 Add a webhook in your repo: URL `http://your-server:9000/hook/myapp`, content type
 `application/json`, secret = `SHIPIT_SECRET` (GitLab: put it in "Secret token").

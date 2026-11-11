@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import Config
 from .deploy import Deployer, log
+from .easy import get_secret
 
 MAX_BODY = 5 * 1024 * 1024
 
@@ -68,7 +69,7 @@ def make_server(cfg: Config) -> ThreadingHTTPServer:
             if len(parts) != 2 or parts[0] != "hook" or parts[1] not in cfg.apps:
                 return self._reply(404, "not found")
             app = cfg.apps[parts[1]]
-            secret = os.environ.get(app.secret_env or "SHIPIT_SECRET", "")
+            secret = os.environ.get(app.secret_env or "SHIPIT_SECRET", "") or get_secret(cfg.state_dir)
             if not secret:
                 return self._reply(500, "webhook secret not configured")
             n = int(self.headers.get("Content-Length") or 0)

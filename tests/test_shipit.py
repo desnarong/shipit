@@ -268,7 +268,52 @@ class HooksAndDoctorTests(unittest.TestCase):
             os.environ.pop("SHIPIT_SECRET", None)
             res = {name: ok for name, ok, _ in doctor.checks(cfg)}
         self.assertFalse(res["b: port 8000"])
-        self.assertFalse(res["a: webhook secret $SHIPIT_SECRET"])
+        self.assertTrue(res["a: webhook secret $SHIPIT_SECRET"])  # auto-generated secret is fine
+
+
+class EasyTests(unittest.TestCase):
+    def test_app_name_from_repo(self):
+        from shipit.easy import app_name_from_repo as n
+        self.assertEqual(n("https://github.com/me/My_App.git"), "my_app")
+        self.assertEqual(n("git@github.com:me/cool-site.git"), "cool-site")
+        self.assertEqual(n("https://github.com/me/Weird Name!/"), "weird-name")
+        self.assertEqual(n("file:///tmp/repo"), "repo")
+
+    def test_free_port_skips_taken_and_pairs(self):
+        from unittest import mock
+        from shipit.easy import free_port
+        with mock.patch("shipit.easy._port_in_use", return_value=False):
+            self.assertEqual(free_port(set(), 8080), 8080)
+            self.assertEqual(free_port({8080}, 8080), 8082)   # 8080 taken -> next pair
+            self.assertEqual(free_port({8081}, 8080), 8082)           # blue/green needs port+1 too
+
+    def test_secret_is_stable_and_private(self):
+        from shipit.easy import get_secret
+        with tempfile.TemporaryDirectory() as t:
+            a = get_secret(Path(t) / "state")
+            self.assertEqual(a, get_secret(Path(t) / "state"))
+            self.assertGreaterEqual(len(a), 32)
+
+    def test_append_app_roundtrip(self):
+        from shipit.easy import append_app
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "shipit.toml"
+            append_app(f, {"name": "a", "repo": 'https://x/y "q".git', "branch": "main", "port": None, "host_port": 8080})
+            append_app(f, {"name": "b", "repo": "r", "host_port": 8082, "domain": "b.example.com"})
+            cfg = load(f)
+            self.assertEqual(set(cfg.apps), {"a", "b"})
+            self.assertEqual(cfg.apps["a"].repo, 'https://x/y "q".git')
+            self.assertEqual(cfg.apps["b"].domain, "b.example.com")
+
+    def test_default_branch_parses_symref(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        from shipit.easy import default_branch
+        out = "ref: refs/heads/trunk\tHEAD\nabc123\tHEAD\n"
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout=out)):
+            self.assertEqual(default_branch("x"), "trunk")
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
+            self.assertEqual(default_branch("x"), "main")
 
 
 if __name__ == "__main__":
