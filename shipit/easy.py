@@ -67,6 +67,12 @@ def get_secret(state_dir: Path) -> str:
     return value
 
 
+def webhook_secret(app, state_dir: Path) -> str:
+    """Per-app env var wins, then SHIPIT_SECRET, then the auto-generated one."""
+    import os
+    return os.environ.get(app.secret_env or "SHIPIT_SECRET", "") or get_secret(state_dir)
+
+
 def append_app(config_path: Path, fields: dict) -> None:
     """Append an [[app]] block, creating the config file if needed."""
     text = config_path.read_text(encoding="utf-8") if config_path.exists() else '[server]\nport = 9000\nstate_dir = ".shipit"\n'

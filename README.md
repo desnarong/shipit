@@ -18,7 +18,24 @@ Self-hosted, open-source auto deploy that works with **any language**.
 - Slack / Discord / Mattermost notifications, deploy history, automatic pruning of old images
 - `shipit status <app>` and `shipit logs <app> -f`
 
-## Quick start (2 commands)
+## Install on a Linux server (one command)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/desnarong/shipit/main/install.sh | sudo bash
+```
+
+Installs git, Python and Docker if missing, puts shipit in `/opt/shipit`, creates a `shipit` user and a
+systemd service that listens for webhooks on port 9000. Read the script first if you like - it is short.
+Options: `--dry-run`, `--no-docker`, `--no-service`, `--from-git`.
+
+Then deploy and enable auto deploy:
+
+```bash
+sudo -u shipit SHIPIT_CONFIG=/var/lib/shipit/shipit.toml shipit up https://github.com/you/your-app.git
+shipit hook your-app --url http://YOUR-SERVER-IP:9000      # registers the GitHub webhook for you (needs `gh`)
+```
+
+## Quick start (any machine with Docker)
 
 ```bash
 pip install shipit-deploy          # the command is `shipit`
@@ -30,13 +47,16 @@ That's it. `shipit up` picks the default branch, a free port and the right Docke
 builds, starts the app, health-checks it and prints the URL. No config file to write -
 it creates `shipit.toml` for you. Add `--domain app.example.com` for HTTPS + zero-downtime releases (needs Caddy).
 
-**Turn on auto deploy** (every push redeploys): run `shipit serve`, then add the webhook URL and secret
-that `shipit up` printed to your repo (Settings -> Webhooks).
+**Turn on auto deploy** (every push redeploys): run `shipit serve`, then register the webhook:
+`shipit hook myapp --url http://YOUR-SERVER:9000` (GitHub, uses the `gh` CLI), or add the URL and secret
+that `shipit up` printed to your repo by hand (Settings -> Webhooks). Apps added with `shipit up`
+are picked up by a running `shipit serve` automatically - no restart.
 
 Other commands:
 
 ```bash
 shipit list                  # apps, status, URLs
+shipit hook myapp --url URL  # register the GitHub push webhook
 shipit deploy myapp          # redeploy now
 shipit rollback myapp        # back to the previous release
 shipit logs myapp -f         # follow logs

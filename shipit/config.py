@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,9 +58,33 @@ def load(path: str | Path) -> Config:
     if not apps:
         raise ValueError("no [[app]] entries in config")
     return Config(
-        state_dir=Path(server.get("state_dir", ".shipit")).resolve(),
+        # relative state_dir is relative to the config file, not the current directory
+        state_dir=(Path(path).resolve().parent / server.get("state_dir", ".shipit")).resolve(),
         listen_host=server.get("host", "0.0.0.0"),
         listen_port=int(server.get("port", 9000)),
         caddy_admin=server.get("caddy_admin", "http://127.0.0.1:2019"),
         apps=apps,
     )
+
+
+class LiveConfig:
+    """Re-reads the config file when it changes, so `shipit up` can add apps while `serve` runs."""
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._mtime: int | None = None
+        self._cfg: Config | None = None
+        self._lock = threading.Lock()
+        self.get()
+
+    def get(self) -> Config:
+        with self._lock:
+            try:
+                mtime = self.path.stat().st_mtime_ns
+                if mtime != self._mtime:
+                    self._cfg = load(self.path)
+                    self._mtime = mtime
+            except (OSError, ValueError):
+                if self._cfg is None:
+                    raise  # first load must succeed; later bad edits keep the last good config
+            return self._cfg

@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import Config
 from .deploy import Deployer, log
-from .easy import get_secret
+from .easy import webhook_secret
 
 MAX_BODY = 5 * 1024 * 1024
 
@@ -27,7 +27,10 @@ def verify(secret: str, headers, body: bytes) -> bool:
     return False
 
 
-def make_server(cfg: Config) -> ThreadingHTTPServer:
+def make_server(source) -> ThreadingHTTPServer:
+    """`source` is a Config or a LiveConfig (anything with .get())."""
+    get = source.get if hasattr(source, "get") else (lambda: source)
+    cfg = get()
     jobs: queue.Queue[str] = queue.Queue()
     pending: set[str] = set()
     lock = threading.Lock()
@@ -38,6 +41,7 @@ def make_server(cfg: Config) -> ThreadingHTTPServer:
             with lock:
                 pending.discard(name)
             try:
+                cfg = get()
                 Deployer(cfg.apps[name], cfg.state_dir, cfg).deploy()
             except Exception as e:  # keep the worker alive
                 log(f"deploy of {name} crashed: {e}")
@@ -65,11 +69,12 @@ def make_server(cfg: Config) -> ThreadingHTTPServer:
             self._reply(200, "ok") if self.path == "/healthz" else self._reply(404, "not found")
 
         def do_POST(self):
+            cfg = get()
             parts = self.path.strip("/").split("/")
             if len(parts) != 2 or parts[0] != "hook" or parts[1] not in cfg.apps:
                 return self._reply(404, "not found")
             app = cfg.apps[parts[1]]
-            secret = os.environ.get(app.secret_env or "SHIPIT_SECRET", "") or get_secret(cfg.state_dir)
+            secret = webhook_secret(app, cfg.state_dir)
             if not secret:
                 return self._reply(500, "webhook secret not configured")
             n = int(self.headers.get("Content-Length") or 0)

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `install.sh`: one-command Linux installer with a systemd service
+- `shipit hook <app> --url ...`: register the GitHub webhook through `gh`
+- `shipit serve` picks up apps added by `shipit up` without a restart
+- Config path from `SHIPIT_CONFIG`; relative `state_dir` is relative to the config file
+
 ## 0.1.0
 
 First public release.

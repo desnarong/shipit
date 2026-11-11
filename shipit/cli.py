@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tomllib
 from pathlib import Path
 
 from . import __version__
-from .config import load
+from .config import LiveConfig, load
 from .deploy import Deployer
 from .detect import detect
-from .easy import app_name_from_repo, append_app, default_branch, free_port, get_secret
+from .easy import app_name_from_repo, append_app, default_branch, free_port, get_secret, webhook_secret
 from .proxy import sync as _proxy_sync
 
 def resync_proxy(cfg) -> None:
@@ -68,8 +69,25 @@ def cmd_up(a) -> int:
     print(f"\n{name} is live: {url}\n")
     print("Turn on auto deploy (every push to the branch redeploys):")
     print("  1. run:  shipit serve")
-    print(f"  2. in your repo -> Settings -> Webhooks, add:  http://<this-server>:{cfg.listen_port}/hook/{name}")
+    print(f"  2. GitHub repos, automatic:  shipit hook {name} --url http://<this-server>:{cfg.listen_port}")
+    print(f"     or by hand: Settings -> Webhooks -> http://<this-server>:{cfg.listen_port}/hook/{name}")
     print(f"     content type: application/json     secret: {get_secret(cfg.state_dir)}")
+    return 0
+
+
+def cmd_hook(a, cfg) -> int:
+    """Register the GitHub webhook for an app (needs the `gh` CLI, logged in)."""
+    from . import hooks
+    app = cfg.apps[a.app]
+    url = hooks.hook_url(a.url, app.name)
+    secret = webhook_secret(app, cfg.state_dir)
+    try:
+        result = hooks.register(app.repo, url, secret)
+    except (ValueError, RuntimeError, OSError) as e:
+        print(f"could not register automatically: {e}", file=sys.stderr)
+        print(f"Add it by hand: URL {url}, content type application/json, secret: {secret}", file=sys.stderr)
+        return 1
+    print(f"webhook {result}: pushes to {app.branch} will now redeploy {app.name} ({url})")
     return 0
 
 
@@ -85,7 +103,7 @@ def cmd_list(cfg) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="shipit", description="Self-hosted auto deploy for any language.")
     p.add_argument("--version", action="version", version=__version__)
-    p.add_argument("-c", "--config", default="shipit.toml")
+    p.add_argument("-c", "--config", default=os.environ.get("SHIPIT_CONFIG", "shipit.toml"))
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init", help="write a sample shipit.toml")
     d = sub.add_parser("detect", help="show detected language / print generated Dockerfile")
@@ -107,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
     up.add_argument("--branch", help="default: the repo's default branch")
     up.add_argument("--port", type=int, help="port the app listens on in the container (usually auto-detected)")
     up.add_argument("--domain", help="serve at this domain via Caddy with zero-downtime releases")
+    hk = sub.add_parser("hook", help="register the GitHub push webhook for an app (uses gh)")
+    hk.add_argument("app")
+    hk.add_argument("--url", required=True, help="public URL of this server, e.g. https://deploy.example.com or http://1.2.3.4:9000")
     sub.add_parser("list", help="list apps and their status")
     sub.add_parser("serve", help="run the webhook server")
     a = p.parse_args(argv)
@@ -127,6 +148,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"# language: {r.lang}\n{r.dockerfile}")
             return 0
         cfg = load(a.config)
+        if a.cmd == "hook":
+            if a.app not in cfg.apps:
+                print(f"unknown app {a.app!r}; known: {', '.join(cfg.apps)}", file=sys.stderr)
+                return 2
+            return cmd_hook(a, cfg)
         if a.cmd == "list":
             return cmd_list(cfg)
         if a.cmd == "doctor":
@@ -135,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "serve":
             from .webhook import make_server
             resync_proxy(cfg)
-            srv = make_server(cfg)
+            srv = make_server(LiveConfig(a.config))
             print(f"[shipit] listening on {cfg.listen_host}:{cfg.listen_port}  (POST /hook/<app>)", flush=True)
             try:
                 srv.serve_forever()

@@ -1,4 +1,6 @@
 import hashlib
+import os
+import time
 import hmac
 import tempfile
 import unittest
@@ -314,6 +316,77 @@ class EasyTests(unittest.TestCase):
             self.assertEqual(default_branch("x"), "trunk")
         with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
             self.assertEqual(default_branch("x"), "main")
+
+
+class HooksTests(unittest.TestCase):
+    def test_parse_github_repo(self):
+        from shipit.hooks import parse_github_repo as p
+        self.assertEqual(p("https://github.com/me/app.git"), ("me", "app"))
+        self.assertEqual(p("git@github.com:me/app.git"), ("me", "app"))
+        self.assertEqual(p("https://x-access-token:abc@github.com/me/app"), ("me", "app"))
+        self.assertIsNone(p("https://gitlab.com/me/app.git"))
+
+    def test_hook_url(self):
+        from shipit.hooks import hook_url
+        self.assertEqual(hook_url("https://d.example.com/", "web"), "https://d.example.com/hook/web")
+        self.assertEqual(hook_url("https://d.example.com/hook/web", "web"), "https://d.example.com/hook/web")
+
+    def test_register_creates_then_updates(self):
+        import json
+        from unittest import mock
+        from shipit import hooks
+        calls = []
+        existing = []
+
+        def fake_gh(method, path, body=None):
+            calls.append((method, path, body))
+            return json.dumps(existing) if method == "GET" else "{}"
+
+        with mock.patch("shipit.hooks._gh", side_effect=fake_gh):
+            self.assertEqual(hooks.register("https://github.com/me/app.git", "http://h/hook/app", "s3"), "created")
+            self.assertEqual(calls[-1][:2], ("POST", "repos/me/app/hooks"))
+            self.assertEqual(calls[-1][2]["config"]["secret"], "s3")
+            self.assertEqual(calls[-1][2]["events"], ["push"])
+            existing.append({"id": 7, "config": {"url": "http://h/hook/app"}})
+            self.assertEqual(hooks.register("https://github.com/me/app.git", "http://h/hook/app", "s3"), "updated")
+            self.assertEqual(calls[-1][:2], ("PATCH", "repos/me/app/hooks/7"))
+
+    def test_register_rejects_non_github(self):
+        from shipit import hooks
+        with self.assertRaises(ValueError):
+            hooks.register("https://gitlab.com/me/app.git", "http://h/hook/app", "s")
+
+    def test_secret_never_on_command_line(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        from shipit import hooks
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="[]", stderr="")) as r:
+            hooks._gh("POST", "repos/a/b/hooks", {"config": {"secret": "TOPSECRET"}})
+            self.assertNotIn("TOPSECRET", " ".join(r.call_args[0][0]))
+            self.assertIn("TOPSECRET", r.call_args.kwargs["input"])
+
+
+class LiveConfigTests(unittest.TestCase):
+    def test_reload_and_keep_last_good(self):
+        from shipit.config import LiveConfig
+        from shipit.easy import append_app
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "shipit.toml"
+            append_app(f, {"name": "a", "repo": "r"})
+            live = LiveConfig(f)
+            self.assertEqual(set(live.get().apps), {"a"})
+            append_app(f, {"name": "b", "repo": "r"})
+            os.utime(f, ns=(1, time.time_ns()))           # make sure mtime differs
+            self.assertEqual(set(live.get().apps), {"a", "b"})
+            f.write_text("this is [not valid toml")
+            os.utime(f, ns=(1, time.time_ns() + 10**9))
+            self.assertEqual(set(live.get().apps), {"a", "b"})   # bad edit keeps last good config
+
+    def test_state_dir_relative_to_config_file(self):
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "shipit.toml"
+            f.write_text('[server]\nstate_dir = "data"\n[[app]]\nname="a"\nrepo="r"\n')
+            self.assertEqual(load(f).state_dir, (Path(t) / "data").resolve())
 
 
 if __name__ == "__main__":
