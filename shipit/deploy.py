@@ -43,6 +43,7 @@ class Deployer:
         self.app = app
         self.cfg = cfg
         self.state_dir = state_dir
+        self._port: int | None = None  # container port of the image being built
         self.dir = state_dir / app.name
         self.src = self.dir / "src"
         self.state_file = self.dir / "state.json"
@@ -59,6 +60,11 @@ class Deployer:
         s = self.state()
         s.update(kw)
         self.state_file.write_text(json.dumps(s, indent=2))
+
+    @property
+    def container_port(self) -> int:
+        """Port the app listens on inside the container (generated Dockerfiles may differ from config)."""
+        return self._port or self.state().get("container_port") or self.app.port
 
     # ---- steps -------------------------------------------------------
     def sync(self) -> str:
@@ -78,8 +84,10 @@ class Deployer:
         a = self.app
         image = f"shipit/{a.name}:{sha}"
         dockerfile = self.src / (a.dockerfile or "Dockerfile")
+        self._port = a.port  # a repo-provided Dockerfile listens where the config says
         if not dockerfile.exists():
             d = detect(self.src, a.port, a.start)
+            self._port = d.port
             log(f"detected {d.lang}; generating Dockerfile")
             dockerfile = self.dir / "Dockerfile.generated"
             dockerfile.write_text(d.dockerfile)
@@ -112,7 +120,7 @@ class Deployer:
 
     def start(self, image: str) -> None:
         a = self.app
-        self._run_container(a.name, image, f"{a.host_port}:{a.port}")
+        self._run_container(a.name, image, f"{a.host_port}:{self.container_port}")
 
     def _running(self, name: str) -> bool:
         r = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", name],
@@ -183,7 +191,7 @@ class Deployer:
         new_slot = "green" if old_slot == "blue" else "blue"
         port = proxy.slot_port(a.host_port, new_slot)
         name = f"{a.name}-{new_slot}"
-        self._run_container(name, image, f"127.0.0.1:{port}:{a.port}")
+        self._run_container(name, image, f"127.0.0.1:{port}:{self.container_port}")
         if not self.healthy(name, port):
             log(f"health check FAILED for {image}; live version untouched")
             run(["docker", "logs", "--tail", "40", name], check=False)
@@ -191,7 +199,7 @@ class Deployer:
             self._record("failed", image)
             self.notify(f"❌ {a.name}: {image} failed its health check. The live version is unchanged.")
             return False
-        self._save(slot=new_slot, port=port, current=image, previous=prev)
+        self._save(slot=new_slot, port=port, current=image, previous=prev, container_port=self.container_port)
         try:
             proxy.sync(self.cfg, self._all_states())
         except OSError as e:
@@ -231,9 +239,9 @@ class Deployer:
 
         # 1. Start the new version beside the live one on a random local port and test it.
         cand = f"{a.name}-next"
-        self._run_container(cand, image, f"127.0.0.1::{a.port}", restart="no")
+        self._run_container(cand, image, f"127.0.0.1::{self.container_port}", restart="no")
         try:
-            port = int(_out(["docker", "port", cand, f"{a.port}/tcp"]).splitlines()[0].rsplit(":", 1)[1])
+            port = int(_out(["docker", "port", cand, f"{self.container_port}/tcp"]).splitlines()[0].rsplit(":", 1)[1])
             ok = self.healthy(cand, port)
         except (subprocess.CalledProcessError, IndexError, ValueError):
             ok = False
@@ -249,7 +257,7 @@ class Deployer:
         # 2. Swap (a brief gap while the port is handed over), then verify again.
         self.start(image)
         if self.healthy():
-            self._save(current=image, previous=prev)
+            self._save(current=image, previous=prev, container_port=self.container_port)
             self._record("deployed", image)
             self.notify(f"✅ {a.name} deployed: {image}")
             self.prune()

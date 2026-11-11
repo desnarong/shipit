@@ -100,4 +100,10 @@ PRs welcome – ideas: multi-server, PR preview deploys, web UI, Traefik/nginx b
 python -m unittest discover -s tests
 ```
 
+End-to-end tests deploy real sample apps with Docker (needs Docker + git, takes a few minutes):
+
+```bash
+SHIPIT_E2E=1 python -m unittest tests.test_e2e -v
+```
+
 MIT licensed.
