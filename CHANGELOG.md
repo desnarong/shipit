@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 - `shipit doctor` works before the first app exists (and without a config file)
 
