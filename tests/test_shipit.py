@@ -210,5 +210,66 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual((d.state()["slot"], d.state()["current"]), ("blue", "img0"))
 
 
+class PythonInferTests(unittest.TestCase):
+    def project(self, files):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        for name, text in files.items():
+            f = Path(d.name) / name
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(text)
+        return d.name
+
+    def test_fastapi(self):
+        r = detect(self.project({"requirements.txt": "fastapi\n", "main.py": "app = FastAPI()\n"}), port=9000)
+        self.assertIn("uvicorn main:app --host 0.0.0.0 --port 9000", r.dockerfile)
+        self.assertIn("pip install --no-cache-dir uvicorn", r.dockerfile)
+
+    def test_flask_custom_var(self):
+        r = detect(self.project({"requirements.txt": "flask\n", "app.py": "server = Flask(__name__)\n"}))
+        self.assertIn("gunicorn app:server", r.dockerfile)
+
+    def test_django(self):
+        r = detect(self.project({"requirements.txt": "django\n", "manage.py": "", "mysite/wsgi.py": ""}))
+        self.assertIn("gunicorn mysite.wsgi:application", r.dockerfile)
+
+    def test_explicit_start_wins(self):
+        r = detect(self.project({"requirements.txt": "flask\n", "app.py": "app = Flask(__name__)\n"}), start="python run.py")
+        self.assertIn("python run.py", r.dockerfile)
+        self.assertNotIn("gunicorn", r.dockerfile)
+
+
+class HooksAndDoctorTests(unittest.TestCase):
+    def test_failed_pre_deploy_aborts_before_anything_starts(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from shipit.config import App
+        from shipit.deploy import Deployer
+        with tempfile.TemporaryDirectory() as t:
+            d = Deployer(App(name="web", repo="x", pre_deploy="exit 1"), Path(t))
+            with mock.patch.object(d, "sync", return_value="abc"), \
+                 mock.patch.object(d, "build", return_value="shipit/web:abc"), \
+                 mock.patch.object(d, "_run_container") as rc, \
+                 mock.patch.object(d, "notify"), \
+                 mock.patch("shipit.deploy.run", return_value=SimpleNamespace(returncode=1)):
+                self.assertFalse(d.deploy())
+                rc.assert_not_called()
+            self.assertEqual(d.state()["history"][-1]["status"], "pre-deploy-failed")
+
+    def test_doctor_flags_duplicate_ports_and_missing_secret(self):
+        import os
+        from unittest import mock
+        from shipit import doctor
+        from shipit.config import App, Config
+        cfg = Config(Path("."), "0.0.0.0", 9000, "http://127.0.0.1:2019",
+                     {"a": App(name="a", repo="x", host_port=8000), "b": App(name="b", repo="x", host_port=8000)})
+        with mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch("shipit.doctor._docker_ok", return_value=(True, "ok")):
+            os.environ.pop("SHIPIT_SECRET", None)
+            res = {name: ok for name, ok, _ in doctor.checks(cfg)}
+        self.assertFalse(res["b: port 8000"])
+        self.assertFalse(res["a: webhook secret $SHIPIT_SECRET"])
+
+
 if __name__ == "__main__":
     unittest.main()

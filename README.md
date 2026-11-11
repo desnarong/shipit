@@ -5,6 +5,7 @@ Self-hosted, open-source auto deploy that works with **any language**.
 
 - Zero dependencies (Python 3.11+ stdlib only) + Docker + git
 - Auto-detects Node, Python, Go, Rust, Java (Maven/Gradle), PHP, Ruby, .NET, Elixir, static sites
+- Python start command is inferred for Django (gunicorn), FastAPI (uvicorn) and Flask (gunicorn)
 - **Any other language:** put a `Dockerfile` in your repo – it always takes priority
 - GitHub / Gitea / Forgejo (HMAC) and GitLab (token) webhooks
 - Private repos via token from an env var (never written to disk)
@@ -19,6 +20,7 @@ Self-hosted, open-source auto deploy that works with **any language**.
 pip install .                      # or: python -m shipit ...
 shipit init                    # writes shipit.toml
 # edit shipit.toml, then:
+shipit doctor                     # check docker / git / caddy / secrets
 shipit detect ./my-project     # preview the generated Dockerfile
 shipit deploy myapp            # deploy once, manually
 export SHIPIT_SECRET=change-me
@@ -39,6 +41,7 @@ Only pushes to the configured `branch` deploy.
 | `health_path` | HTTP path polled after start (`""` = only check it stays running) |
 | `start` | start command for generated Dockerfiles |
 | `dockerfile` | custom Dockerfile path inside the repo |
+| `pre_deploy` | command run once in the new image before release (e.g. `python manage.py migrate`); failure aborts and the live version stays |
 | `env_file` | host env file passed to the container |
 | `token_env` | env var holding a git token (private https repos) |
 | `secret_env` | env var with this app's webhook secret |

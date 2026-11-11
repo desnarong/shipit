@@ -24,6 +24,7 @@ class App:
     env_file: str | None = None   # path on the host
     token_env: str | None = None  # env var holding a git token for private https repos
     secret_env: str | None = None # env var with the webhook secret for this app
+    pre_deploy: str | None = None # command run once in the new image before release (e.g. migrations); failure aborts
     domain: str | None = None     # set to serve via Caddy with zero-downtime blue/green (needs Caddy)
     notify_env: str | None = None # env var holding a Slack/Discord/Mattermost-style webhook URL
     drain_seconds: int = 5        # proxy mode: wait before removing the old slot

@@ -6,6 +6,7 @@ only a convenience for the common cases.
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,20 +43,53 @@ EXPOSE {port}
 """)
 
 
+_APP_RE = re.compile(r"^(\w+)\s*=\s*(Flask|FastAPI|Starlette|Quart)\(", re.M)
+
+
+def _infer_python(root: Path, port: int) -> tuple[str, str] | None:
+    """Guess (start command, extra pip packages) for Django / FastAPI / Flask projects."""
+    deps = ""
+    for f in ("requirements.txt", "pyproject.toml"):
+        if (root / f).exists():
+            deps += (root / f).read_text(encoding="utf-8", errors="ignore").lower()
+    bind = f"0.0.0.0:{port}"
+    if (root / "manage.py").exists():
+        for wsgi in sorted(root.glob("*/wsgi.py")):
+            return f"gunicorn {wsgi.parent.name}.wsgi:application -b {bind}", "gunicorn"
+    for f in ("main.py", "app.py", "server.py", "api.py"):
+        path = root / f
+        if not path.exists():
+            continue
+        m = _APP_RE.search(path.read_text(encoding="utf-8", errors="ignore"))
+        if not m:
+            continue
+        target = f"{path.stem}:{m.group(1)}"
+        if m.group(2) in ("FastAPI", "Starlette"):
+            return f"uvicorn {target} --host 0.0.0.0 --port {port}", "uvicorn"
+        return f"gunicorn {target} -b {bind}", "gunicorn"
+    return None
+
+
 def _python(root, port, start):
+    extra = ""
     if start is None:
-        for f in ("app.py", "main.py", "server.py"):
-            if (root / f).exists():
-                start = f"python {f}"
-                break
+        guess = _infer_python(root, port)
+        if guess:
+            start, extra = guess
         else:
-            raise ValueError("Python project: set `start` in config (e.g. 'gunicorn app:app -b 0.0.0.0:8000')")
+            for f in ("app.py", "main.py", "server.py"):
+                if (root / f).exists():
+                    start = f"python {f}"
+                    break
+            else:
+                raise ValueError("Python project: set `start` in config (e.g. 'gunicorn app:app -b 0.0.0.0:8000')")
+    pip_extra = f"RUN pip install --no-cache-dir {extra}\n" if extra else ""
     return Detected("python", port, f"""FROM python:3.12-slim
 WORKDIR /app
 COPY . .
 RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; \\
     elif [ -f pyproject.toml ]; then pip install --no-cache-dir .; fi
-ENV PORT={port} PYTHONUNBUFFERED=1
+{pip_extra}ENV PORT={port} PYTHONUNBUFFERED=1
 EXPOSE {port}
 {_cmd(start, start)}
 """)

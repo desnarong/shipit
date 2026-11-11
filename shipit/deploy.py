@@ -98,6 +98,18 @@ class Deployer:
             cmd += ["--env-file", a.env_file]
         run(cmd + [image])
 
+    def _pre_deploy(self, image: str) -> bool:
+        a = self.app
+        if not a.pre_deploy:
+            return True
+        cmd = ["docker", "run", "--rm"] + (["--env-file", a.env_file] if a.env_file else [])
+        ok = run(cmd + [image, "sh", "-c", a.pre_deploy], check=False).returncode == 0
+        if not ok:
+            log("pre_deploy command failed; release aborted")
+            self._record("pre-deploy-failed", image)
+            self.notify(f"❌ {a.name}: pre_deploy failed for {image}. The live version is unchanged.")
+        return ok
+
     def start(self, image: str) -> None:
         a = self.app
         self._run_container(a.name, image, f"{a.host_port}:{a.port}")
@@ -205,6 +217,8 @@ class Deployer:
             self._record("build-failed", "-")
             self.notify(f"❌ {a.name}: build failed ({e})")
             raise
+        if not self._pre_deploy(image):
+            return False
         prev = self.state().get("current")
         if a.domain:
             ok = self._release_proxy(image, prev)

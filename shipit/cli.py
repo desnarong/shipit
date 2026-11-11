@@ -34,6 +34,7 @@ health_path = "/"
 # token_env  = "GIT_TOKEN"        # private repos
 # secret_env = "MYAPP_SECRET"     # webhook secret (default: SHIPIT_SECRET)
 # notify_env = "SLACK_URL"        # env var with a Slack/Discord webhook URL
+# pre_deploy = "python manage.py migrate"   # runs in the new image before release
 # domain = "app.example.com"   # zero-downtime via Caddy (blue/green on host_port and host_port+1)
 # keep_images = 5
 # env_file   = "/etc/myapp.env"
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     lg.add_argument("app")
     lg.add_argument("-n", "--tail", type=int, default=100)
     lg.add_argument("-f", "--follow", action="store_true")
+    sub.add_parser("doctor", help="check docker/git/caddy/secrets before deploying")
     sub.add_parser("serve", help="run the webhook server")
     a = p.parse_args(argv)
 
@@ -76,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"# language: {r.lang}\n{r.dockerfile}")
             return 0
         cfg = load(a.config)
+        if a.cmd == "doctor":
+            from . import doctor
+            return doctor.run(cfg)
         if a.cmd == "serve":
             from .webhook import make_server
             resync_proxy(cfg)
