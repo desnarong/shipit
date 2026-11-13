@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shipit-deploy"
-version = "0.2.2"
+version = "0.3.0"
 description = "Self-hosted, language-agnostic auto deploy: git push -> build -> health check -> rollback"
 readme = "README.md"
 license = { text = "MIT" }

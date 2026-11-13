@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - Monorepo support: `subdir` in config / `shipit up --subdir` builds an app that lives in a folder of the repo
 - Pull-request previews: `previews = true` deploys every same-repo PR to its own port (`<app>-pr-<n>`), redeploys on push, removes on close; previews never use the production env file or `pre_deploy`
