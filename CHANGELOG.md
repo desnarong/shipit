@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Monorepo support: `subdir` in config / `shipit up --subdir` builds an app that lives in a folder of the repo
+- Pull-request previews: `previews = true` deploys every same-repo PR to its own port (`<app>-pr-<n>`), redeploys on push, removes on close; previews never use the production env file or `pre_deploy`
+- `shipit hook` also subscribes to pull_request events when previews are on
+
 ## 0.2.2
 
 - README: "Buy me a coffee" section (USDT TRC20) and a Sponsor button via `.github/FUNDING.yml`

@@ -8,6 +8,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DOMAIN_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+def _safe_subdir(value: str) -> bool:
+    """Relative path inside the repo, on any OS: no leading slash/backslash, drive letter or '..'."""
+    p = value.replace("\\", "/")
+    return bool(p) and not p.startswith("/") and not re.match(r"^[A-Za-z]:", p) and ".." not in p.split("/")
+
+
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
 
 
@@ -26,6 +32,9 @@ class App:
     token_env: str | None = None  # env var holding a git token for private https repos
     secret_env: str | None = None # env var with the webhook secret for this app
     pre_deploy: str | None = None # command run once in the new image before release (e.g. migrations); failure aborts
+    subdir: str | None = None     # monorepo: folder inside the repo that holds this app
+    previews: bool = False        # deploy a throw-away copy for every pull request (same-repo PRs only)
+    preview_env_file: str | None = None  # env file for previews (never the production env_file)
     domain: str | None = None     # set to serve via Caddy with zero-downtime blue/green (needs Caddy)
     notify_env: str | None = None # env var holding a Slack/Discord/Mattermost-style webhook URL
     drain_seconds: int = 5        # proxy mode: wait before removing the old slot
@@ -55,6 +64,8 @@ def load(path: str | Path, allow_empty: bool = False) -> Config:
         app = App(**raw)
         if not NAME_RE.match(app.name):
             raise ValueError(f"invalid app name {app.name!r} (use a-z 0-9 _ . -)")
+        if app.subdir is not None and not _safe_subdir(app.subdir):
+            raise ValueError(f"subdir {app.subdir!r} must be a relative path inside the repo")
         if app.domain and not DOMAIN_RE.match(app.domain):
             raise ValueError(f"invalid domain {app.domain!r}")
         if app.name in apps:

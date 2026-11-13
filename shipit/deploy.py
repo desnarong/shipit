@@ -62,6 +62,11 @@ class Deployer:
         self.state_file.write_text(json.dumps(s, indent=2))
 
     @property
+    def root(self) -> Path:
+        """Folder with the app's code: the repo root, or `subdir` for monorepos."""
+        return self.src / self.app.subdir if self.app.subdir else self.src
+
+    @property
     def container_port(self) -> int:
         """Port the app listens on inside the container (generated Dockerfiles may differ from config)."""
         return self._port or self.state().get("container_port") or self.app.port
@@ -83,11 +88,13 @@ class Deployer:
     def build(self, sha: str) -> str:
         a = self.app
         image = f"shipit/{a.name}:{sha}"
-        dockerfile = self.src / (a.dockerfile or "Dockerfile")
+        if not self.root.is_dir():
+            raise ValueError(f"subdir {a.subdir!r} does not exist in the repo")
+        dockerfile = self.root / (a.dockerfile or "Dockerfile")
         self._port = a.port  # a repo-provided Dockerfile listens where the config says
         generated = not dockerfile.exists()
         if generated:
-            d = detect(self.src, a.port, a.start)
+            d = detect(self.root, a.port, a.start)
             self._port = d.port
             log(f"detected {d.lang}; generating Dockerfile")
             dockerfile = self.dir / "Dockerfile.generated"
@@ -95,7 +102,7 @@ class Deployer:
         cmd = ["docker", "build", "-f", str(dockerfile), "-t", image]
         for k, v in a.build_args.items():
             cmd += ["--build-arg", f"{k}={v}"]
-        run(cmd + [str(self.src)])
+        run(cmd + [str(self.root)])
         if not generated:
             exposed = self._exposed_ports(image)
             if len(exposed) == 1:   # zero-config: follow the Dockerfile's EXPOSE
@@ -311,6 +318,17 @@ class Deployer:
     def _live_name(self) -> str:
         slot = self.state().get("slot")
         return f"{self.app.name}-{slot}" if self.app.domain and slot else self.app.name
+
+    def destroy(self) -> None:
+        """Remove everything for this app: containers, images, state (used for preview teardown)."""
+        a = self.app
+        for suffix in ("", "-next", "-blue", "-green"):
+            run(["docker", "rm", "-f", a.name + suffix], check=False)
+        images = subprocess.run(["docker", "images", f"shipit/{a.name}", "-q"], capture_output=True, text=True).stdout.split()
+        if images:
+            run(["docker", "rmi", "-f", *images], check=False)
+        import shutil
+        shutil.rmtree(self.dir, ignore_errors=True)
 
     def status(self) -> str:
         s = self.state()

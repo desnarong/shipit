@@ -70,9 +70,11 @@ class E2EBase(unittest.TestCase):
         git(self.repo, "init", "-b", "main")
 
     def cleanup_docker(self):
-        for suffix in ("", "-next", "-blue", "-green"):
-            subprocess.run(["docker", "rm", "-f", self.name + suffix], capture_output=True)
-        images = subprocess.run(["docker", "images", f"shipit/{self.name}", "-q"],
+        ids = subprocess.run(["docker", "ps", "-a", "-q", "--filter", f"name={self.name}"],
+                             capture_output=True, text=True).stdout.split()
+        if ids:
+            subprocess.run(["docker", "rm", "-f", *ids], capture_output=True)
+        images = subprocess.run(["docker", "images", f"shipit/{self.name}*", "-q"],
                                 capture_output=True, text=True).stdout.split()
         if images:
             subprocess.run(["docker", "rmi", "-f", *images], capture_output=True)
@@ -177,6 +179,61 @@ class ZeroConfigUp(E2EBase):
         self.assertIn('branch = "main"', text)           # branch auto-detected
         self.assertEqual(main(["-c", str(cfg), "up", self.repo.resolve().as_uri(), "--name", self.name]), 2)  # no duplicates
         self.assertEqual(main(["-c", str(cfg), "list"]), 0)
+
+
+BUSYBOX = "FROM busybox\nCOPY www /www\nEXPOSE 8080\nCMD [\"httpd\", \"-f\", \"-p\", \"8080\", \"-h\", \"/www\"]\n"
+
+
+class MonorepoE2E(E2EBase):
+    def test_app_inside_a_subfolder(self):
+        commit_files(self.repo, {
+            "package.json": "this is a broken decoy at the repo root",
+            "services/api/Dockerfile": BUSYBOX,
+            "services/api/www/index.html": "mono-v1",
+        })
+        d = self.deployer(subdir="services/api")
+        self.assertTrue(d.deploy())
+        self.assertEqual(fetch(d.app.host_port), "mono-v1")
+
+
+class PreviewE2E(E2EBase):
+    def test_pull_request_preview_lifecycle(self):
+        from shipit.config import Config
+        from shipit.previews import Previews
+        commit_files(self.repo, {"Dockerfile": BUSYBOX, "www/index.html": "main-v1"})
+        git(self.repo, "switch", "-c", "feature-x")
+        commit_files(self.repo, {"www/index.html": "feature-v2"})
+        git(self.repo, "switch", "main")
+
+        d = self.deployer(previews=True)
+        self.assertTrue(d.deploy())                                  # production from main
+        prod_port = d.app.host_port
+        cfg = Config(self.tmp / "state", "127.0.0.1", 9000, "http://127.0.0.1:2019", {self.name: d.app})
+        previews = Previews(cfg, d.app)
+
+        self.assertTrue(previews.deploy(5, "feature-x"))             # PR opened
+        port = previews._load()["5"]["host_port"]
+        self.assertNotEqual(port, prod_port)
+        self.assertEqual(fetch(port), "feature-v2")                  # preview shows the PR branch
+        self.assertEqual(fetch(prod_port), "main-v1")                # production untouched
+
+        commit_files_on(self.repo, "feature-x", {"www/index.html": "feature-v3"})
+        self.assertTrue(previews.deploy(5, "feature-x"))             # new push to the PR
+        self.assertEqual(previews._load()["5"]["host_port"], port)   # same port
+        self.assertEqual(fetch(port), "feature-v3")
+
+        previews.teardown(5)                                         # PR closed
+        names = subprocess.run(["docker", "ps", "-a", "--filter", f"name={self.name}-pr-5", "-q"],
+                               capture_output=True, text=True).stdout.strip()
+        self.assertEqual(names, "")
+        self.assertEqual(previews._load(), {})
+        self.assertEqual(fetch(prod_port), "main-v1")
+
+
+def commit_files_on(repo: Path, branch: str, files: dict[str, str]) -> None:
+    git(repo, "switch", branch)
+    commit_files(repo, files)
+    git(repo, "switch", "main")
 
 
 if __name__ == "__main__":

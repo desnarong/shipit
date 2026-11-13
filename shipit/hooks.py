@@ -20,11 +20,11 @@ def hook_url(base: str, app: str) -> str:
     return base if "/hook/" in base else f"{base}/hook/{app}"
 
 
-def payload(url: str, secret: str) -> dict:
+def payload(url: str, secret: str, events: tuple[str, ...] = ("push",)) -> dict:
     return {
         "name": "web",
         "active": True,
-        "events": ["push"],
+        "events": list(events),
         "config": {"url": url, "content_type": "json", "secret": secret, "insecure_ssl": "0"},
     }
 
@@ -38,7 +38,7 @@ def _gh(method: str, path: str, body: dict | None = None) -> str:
     return r.stdout
 
 
-def register(repo_url: str, url: str, secret: str) -> str:
+def register(repo_url: str, url: str, secret: str, events: tuple[str, ...] = ("push",)) -> str:
     """Create (or update) the webhook. Returns 'created' or 'updated'."""
     parsed = parse_github_repo(repo_url)
     if not parsed:
@@ -47,7 +47,7 @@ def register(repo_url: str, url: str, secret: str) -> str:
     base = f"repos/{owner}/{repo}/hooks"
     for h in json.loads(_gh("GET", base) or "[]"):
         if h.get("config", {}).get("url") == url:
-            _gh("PATCH", f"{base}/{h['id']}", payload(url, secret))
+            _gh("PATCH", f"{base}/{h['id']}", payload(url, secret, events))
             return "updated"
-    _gh("POST", base, payload(url, secret))
+    _gh("POST", base, payload(url, secret, events))
     return "created"

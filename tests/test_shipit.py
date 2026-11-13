@@ -416,5 +416,164 @@ class DoctorWithoutAppsTests(unittest.TestCase):
             self.assertEqual(main(["-c", str(f), "list"]), 2)
 
 
+class MonorepoTests(unittest.TestCase):
+    def test_subdir_rejects_escape(self):
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "a.toml"
+            for bad in ("../x", "/abs", "a/../../b"):
+                f.write_text(f'[[app]]\nname="a"\nrepo="r"\nsubdir="{bad}"\n')
+                with self.assertRaises(ValueError, msg=bad):
+                    load(f)
+            f.write_text('[[app]]\nname="a"\nrepo="r"\nsubdir="services/api"\n')
+            self.assertEqual(load(f).apps["a"].subdir, "services/api")
+
+    def test_build_uses_subdir_for_detection_and_context(self):
+        from unittest import mock
+        from shipit.config import App
+        from shipit.deploy import Deployer
+        with tempfile.TemporaryDirectory() as t:
+            d = Deployer(App(name="web", repo="x", subdir="services/api"), Path(t))
+            (d.src / "services" / "api").mkdir(parents=True)
+            (d.src / "package.json").write_text("{}")                      # a root-level decoy
+            (d.src / "services" / "api" / "go.mod").write_text("module x\n")
+            ran = []
+            with mock.patch("shipit.deploy.run", side_effect=lambda cmd, **k: ran.append(cmd)), \
+                 mock.patch.object(d, "_exposed_ports", return_value=[]):
+                d.build("abc")
+            self.assertEqual(ran[-1][-1], str(d.src / "services" / "api"))       # build context
+            self.assertIn("golang", (d.dir / "Dockerfile.generated").read_text())  # detected the subdir, not the decoy
+
+    def test_missing_subdir_is_a_clear_error(self):
+        from shipit.config import App
+        from shipit.deploy import Deployer
+        with tempfile.TemporaryDirectory() as t:
+            d = Deployer(App(name="web", repo="x", subdir="nope"), Path(t))
+            d.src.mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                d.build("abc")
+
+
+class PreviewTests(unittest.TestCase):
+    def pr(self, action="opened", number=7, ref="feature-x", head="me/app", base="me/app", draft=False):
+        return {"action": action, "pull_request": {"number": number, "draft": draft,
+                "head": {"ref": ref, "repo": {"full_name": head}}, "base": {"repo": {"full_name": base}}}}
+
+    def test_parse_pr_event(self):
+        from shipit.previews import parse_pr_event
+        self.assertTrue(parse_pr_event(self.pr())["same_repo"])
+        self.assertFalse(parse_pr_event(self.pr(head="evil/app"))["same_repo"])
+        self.assertIsNone(parse_pr_event({"action": "opened"}))
+
+    def make(self):
+        from shipit.config import App, Config
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        app = App(name="web", repo="x", host_port=8080, domain="web.example.com", pre_deploy="migrate",
+                  env_file="/prod.env", preview_env_file="/preview.env", previews=True)
+        return Config(Path(tmp.name), "127.0.0.1", 9000, "http://127.0.0.1:2019", {"web": app}), app
+
+    def test_preview_app_is_isolated_from_production(self):
+        from unittest import mock
+        from shipit.previews import Previews
+        cfg, app = self.make()
+        with mock.patch("shipit.previews.Deployer") as D, mock.patch("shipit.previews.free_port", return_value=20000):
+            D.return_value.deploy.return_value = True
+            self.assertTrue(Previews(cfg, app).deploy(7, "feature-x"))
+            pa = D.call_args[0][0]
+        self.assertEqual(pa.name, "web-pr-7")
+        self.assertEqual((pa.branch, pa.host_port), ("feature-x", 20000))
+        self.assertIsNone(pa.domain)
+        self.assertIsNone(pa.pre_deploy)                 # never run production migrations for a preview
+        self.assertEqual(pa.env_file, "/preview.env")    # never the production env file
+        self.assertFalse(pa.previews)
+
+    def test_same_pr_keeps_its_port_and_teardown_frees_it(self):
+        from unittest import mock
+        from shipit.previews import Previews
+        cfg, app = self.make()
+        ports = iter([20000, 20002])
+        with mock.patch("shipit.previews.Deployer") as D, mock.patch("shipit.previews.free_port", side_effect=lambda *a: next(ports)):
+            D.return_value.deploy.return_value = True
+            p = Previews(cfg, app)
+            p.deploy(7, "a")
+            p.deploy(7, "a")                             # redeploy on push: same port
+            self.assertEqual(D.call_args[0][0].host_port, 20000)
+            p.deploy(8, "b")
+            self.assertEqual(D.call_args[0][0].host_port, 20002)
+            p.teardown(7)
+            D.return_value.destroy.assert_called_once()
+            self.assertNotIn("7", p._load())
+            self.assertIn("8", p._load())
+
+    def test_unsafe_branch_name_refused(self):
+        from unittest import mock
+        from shipit.previews import Previews
+        cfg, app = self.make()
+        with mock.patch("shipit.previews.Deployer") as D:
+            self.assertFalse(Previews(cfg, app).deploy(1, "--upload-pack=evil"))
+            D.assert_not_called()
+
+    def test_webhook_routes_pull_requests(self):
+        import hmac as _hmac
+        import json
+        import socket
+        import threading
+        import urllib.request
+        from unittest import mock
+        from shipit.config import App, Config
+        from shipit.webhook import make_server
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        cfg = Config(Path(tmp.name), "127.0.0.1", port, "http://127.0.0.1:2019",
+                     {"on": App(name="on", repo="x", previews=True), "off": App(name="off", repo="x")})
+        done = threading.Event()
+        calls = []
+
+        class FakePreviews:
+            def __init__(self, c, a):
+                pass
+
+            def deploy(self, n, ref):
+                calls.append(("deploy", n, ref))
+                done.set()
+
+            def teardown(self, n):
+                calls.append(("teardown", n))
+                done.set()
+
+        secret = "s3cret"
+        os.environ["SHIPIT_SECRET"] = secret
+        self.addCleanup(os.environ.pop, "SHIPIT_SECRET", None)
+        with mock.patch("shipit.webhook.Previews", FakePreviews):
+            srv = make_server(cfg)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            self.addCleanup(srv.shutdown)
+
+            def post(app, payload, event="pull_request"):
+                body = json.dumps(payload).encode()
+                sig = "sha256=" + _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+                req = urllib.request.Request(f"http://127.0.0.1:{port}/hook/{app}", data=body, method="POST",
+                                             headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": event})
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return r.status
+
+            self.assertEqual(post("on", {}, "ping"), 200)
+            self.assertEqual(post("off", self.pr()), 200)                         # previews disabled
+            self.assertEqual(post("on", self.pr(head="evil/app")), 200)           # fork: ignored
+            self.assertEqual(post("on", self.pr(draft=True)), 200)                # drafts ignored
+            self.assertEqual(post("on", self.pr(action="labeled")), 200)          # irrelevant action
+            self.assertEqual(calls, [])
+            self.assertEqual(post("on", self.pr()), 202)
+            self.assertTrue(done.wait(5))
+            done.clear()
+            self.assertEqual(calls[-1], ("deploy", 7, "feature-x"))
+            self.assertEqual(post("on", self.pr(action="closed")), 202)
+            self.assertTrue(done.wait(5))
+            self.assertEqual(calls[-1], ("teardown", 7))
+
+
 if __name__ == "__main__":
     unittest.main()

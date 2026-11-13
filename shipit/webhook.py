@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .config import Config
 from .deploy import Deployer, log
 from .easy import webhook_secret
+from .previews import DEPLOY_ACTIONS, Previews, parse_pr_event
 
 MAX_BODY = 5 * 1024 * 1024
 
@@ -32,29 +33,35 @@ def make_server(source) -> ThreadingHTTPServer:
     get = source.get if hasattr(source, "get") else (lambda: source)
     cfg = get()
     jobs: queue.Queue[str] = queue.Queue()
-    pending: set[str] = set()
+    pending: dict[str, object] = {}   # job key -> function to run; a newer request replaces a queued one
     lock = threading.Lock()
 
     def worker():
         while True:
-            name = jobs.get()
+            key = jobs.get()
             with lock:
-                pending.discard(name)
+                fn = pending.pop(key)
             try:
-                cfg = get()
-                Deployer(cfg.apps[name], cfg.state_dir, cfg).deploy()
+                fn()
             except Exception as e:  # keep the worker alive
-                log(f"deploy of {name} crashed: {e}")
+                log(f"job {key} crashed: {e}")
 
     threading.Thread(target=worker, daemon=True).start()
 
-    def enqueue(name: str) -> bool:
+    def enqueue(key: str, fn) -> bool:
         with lock:
-            if name in pending:
-                return False  # a build is already queued; it will pick up the latest commit
-            pending.add(name)
-        jobs.put(name)
+            already = key in pending
+            pending[key] = fn
+        if already:
+            return False  # already queued; it will pick up the newest request
+        jobs.put(key)
         return True
+
+    def deploy_app(name: str):
+        def run_it():
+            cfg = get()
+            Deployer(cfg.apps[name], cfg.state_dir, cfg).deploy()
+        return run_it
 
     class Handler(BaseHTTPRequestHandler):
         def _reply(self, code: int, msg: str):
@@ -84,13 +91,36 @@ def make_server(source) -> ThreadingHTTPServer:
             if not verify(secret, self.headers, body):
                 return self._reply(401, "bad signature")
             try:
-                ref = json.loads(body or b"{}").get("ref", "")
+                payload = json.loads(body or b"{}")
             except ValueError:
                 return self._reply(400, "bad json")
+            event = self.headers.get("X-GitHub-Event", "push")
+            if event == "ping":
+                return self._reply(200, "pong")
+            if event == "pull_request":
+                return self._pull_request(cfg, app, payload)
+            ref = payload.get("ref", "")
             if ref and ref != f"refs/heads/{app.branch}":
                 return self._reply(200, f"ignored ref {ref}")
-            queued = enqueue(app.name)
+            queued = enqueue(app.name, deploy_app(app.name))
             self._reply(202, "queued" if queued else "already queued")
+
+        def _pull_request(self, cfg, app, payload):
+            if not app.previews:
+                return self._reply(200, "previews are not enabled for this app")
+            pr = parse_pr_event(payload)
+            if pr is None:
+                return self._reply(400, "bad pull_request payload")
+            if not pr["same_repo"]:
+                return self._reply(200, "ignored: pull request from a fork")
+            n, key = pr["number"], f"{app.name}#pr{pr['number']}"
+            if pr["action"] == "closed":
+                queued = enqueue(key, lambda: Previews(get(), get().apps[app.name]).teardown(n))
+                return self._reply(202, "teardown queued" if queued else "already queued")
+            if pr["action"] in DEPLOY_ACTIONS and not pr["draft"]:
+                queued = enqueue(key, lambda: Previews(get(), get().apps[app.name]).deploy(n, pr["ref"]))
+                return self._reply(202, "preview queued" if queued else "already queued")
+            return self._reply(200, f"ignored action {pr['action']}")
 
         def log_message(self, fmt, *args):
             log("http " + fmt % args)

@@ -38,6 +38,8 @@ health_path = "/"
 # secret_env = "MYAPP_SECRET"     # webhook secret (default: SHIPIT_SECRET)
 # notify_env = "SLACK_URL"        # env var with a Slack/Discord webhook URL
 # pre_deploy = "python manage.py migrate"   # runs in the new image before release
+# subdir = "services/api"   # monorepo: the app lives in this folder
+# previews = true            # deploy every pull request to its own port (same-repo PRs only)
 # domain = "app.example.com"   # zero-downtime via Caddy (blue/green on host_port and host_port+1)
 # keep_images = 5
 # env_file   = "/etc/myapp.env"
@@ -57,7 +59,7 @@ def cmd_up(a) -> int:
     taken = {p for x in existing for p in (x.get("host_port", 8080), x.get("host_port", 8080) + 1)}
     host_port = free_port(taken)
     fields = {"name": name, "repo": a.repo, "branch": a.branch or default_branch(a.repo),
-              "port": a.port, "host_port": host_port, "domain": a.domain}
+              "port": a.port, "host_port": host_port, "domain": a.domain, "subdir": a.subdir}
     append_app(path, fields)
     cfg = load(path)
     print(f"[shipit] added {name!r} to {path} (branch {fields['branch']}, port {host_port})", flush=True)
@@ -82,7 +84,7 @@ def cmd_hook(a, cfg) -> int:
     url = hooks.hook_url(a.url, app.name)
     secret = webhook_secret(app, cfg.state_dir)
     try:
-        result = hooks.register(app.repo, url, secret)
+        result = hooks.register(app.repo, url, secret, ("push", "pull_request") if app.previews else ("push",))
     except (ValueError, RuntimeError, OSError) as e:
         print(f"could not register automatically: {e}", file=sys.stderr)
         print(f"Add it by hand: URL {url}, content type application/json, secret: {secret}", file=sys.stderr)
@@ -124,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     up.add_argument("--name")
     up.add_argument("--branch", help="default: the repo's default branch")
     up.add_argument("--port", type=int, help="port the app listens on in the container (usually auto-detected)")
+    up.add_argument("--subdir", help="monorepo: folder inside the repo that holds the app")
     up.add_argument("--domain", help="serve at this domain via Caddy with zero-downtime releases")
     hk = sub.add_parser("hook", help="register the GitHub push webhook for an app (uses gh)")
     hk.add_argument("app")
